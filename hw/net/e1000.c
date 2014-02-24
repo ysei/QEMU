@@ -186,6 +186,9 @@ e1000_link_up(E1000State *s)
     s->phy_reg[PHY_STATUS] |= MII_SR_LINK_STATUS;
 }
 
+/* Forward decl. for use in set_phy_ctrl() (OS X link nego. workaround) */
+static void set_ics(E1000State *s, int index, uint32_t val);
+
 static void
 set_phy_ctrl(E1000State *s, int index, uint16_t val)
 {
@@ -195,6 +198,15 @@ set_phy_ctrl(E1000State *s, int index, uint16_t val)
      * down.
      */
     if (!(s->compat_flags & E1000_FLAG_AUTONEG)) {
+        return;
+    }
+    /*
+     * The Mac OS X driver expects a pre-initialized network card; injecting
+     * an extra LSC event here allows initial link negotiation to succeed in
+     * the absence of the Apple EFI BIOS.
+     */
+    if ((val & MII_CR_RESET)) {
+        set_ics(s, 0, E1000_ICR_LSC);
         return;
     }
     if ((val & MII_CR_AUTO_NEG_EN) && (val & MII_CR_RESTART_AUTO_NEG)) {
@@ -1159,8 +1171,14 @@ set_imc(E1000State *s, int index, uint32_t val)
 static void
 set_ims(E1000State *s, int index, uint32_t val)
 {
+    uint32_t ics_val = 0;
+
+    /* When Mac OS X initially unmasks LSC, it expects to see it set in ICS */
+    if (s->mac_reg[IMS] == 0 && (val & E1000_IMS_LSC))
+        ics_val |= E1000_ICR_LSC;
+
     s->mac_reg[IMS] |= val;
-    set_ics(s, 0, 0);
+    set_ics(s, 0, ics_val);
 }
 
 #define getreg(x)	[x] = mac_readreg
